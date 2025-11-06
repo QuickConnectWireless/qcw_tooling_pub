@@ -44,13 +44,96 @@ async function connectToMongo() {
   }
 }
 
-// Health check
-app.get('/health', (req, res) => {
-  res.json({ 
+// Health check (enhanced diagnostics)
+app.get('/health', async (req, res) => {
+  const health = { 
     status: 'ok', 
     connected: db !== null,
-    database: DATABASE
-  });
+    database: DATABASE,
+    timestamp: new Date().toISOString()
+  };
+  
+  // Test actual database connectivity
+  if (db) {
+    try {
+      await db.admin().ping();
+      health.ping = 'success';
+      
+      // Try to count documents in network_tests
+      const count = await db.collection('network_tests').countDocuments();
+      health.testCollection = 'accessible';
+      health.documentCount = count;
+    } catch (error) {
+      health.ping = 'failed';
+      health.pingError = error.message;
+      health.status = 'degraded';
+    }
+  }
+  
+  res.json(health);
+});
+
+// Diagnostic endpoint - test database operations
+app.get('/diagnose', async (req, res) => {
+  const diagnostics = {
+    timestamp: new Date().toISOString(),
+    environment: {
+      nodeVersion: process.version,
+      port: PORT,
+      database: DATABASE,
+      mongoUriConfigured: !!MONGODB_URI,
+      mongoUriHost: MONGODB_URI ? MONGODB_URI.split('@')[1]?.split('/')[0] : 'not configured'
+    },
+    connection: {
+      clientInitialized: !!mongoClient,
+      dbInitialized: !!db
+    },
+    tests: {}
+  };
+  
+  // Test 1: Connection
+  try {
+    await connectToMongo();
+    diagnostics.tests.connection = { status: 'success' };
+  } catch (error) {
+    diagnostics.tests.connection = { status: 'failed', error: error.message };
+    return res.json(diagnostics);
+  }
+  
+  // Test 2: Ping
+  try {
+    await db.admin().ping();
+    diagnostics.tests.ping = { status: 'success' };
+  } catch (error) {
+    diagnostics.tests.ping = { status: 'failed', error: error.message };
+  }
+  
+  // Test 3: List collections
+  try {
+    const collections = await db.listCollections().toArray();
+    diagnostics.tests.listCollections = { 
+      status: 'success', 
+      count: collections.length,
+      collections: collections.map(c => c.name)
+    };
+  } catch (error) {
+    diagnostics.tests.listCollections = { status: 'failed', error: error.message };
+  }
+  
+  // Test 4: Query network_tests
+  try {
+    const count = await db.collection('network_tests').countDocuments();
+    const sample = await db.collection('network_tests').findOne();
+    diagnostics.tests.networkTests = { 
+      status: 'success', 
+      count,
+      hasSampleData: !!sample
+    };
+  } catch (error) {
+    diagnostics.tests.networkTests = { status: 'failed', error: error.message };
+  }
+  
+  res.json(diagnostics);
 });
 
 // Query (find)
@@ -58,6 +141,8 @@ app.post('/query', async (req, res) => {
   try {
     await connectToMongo();
     const { collection, query = {}, options = {} } = req.body;
+    
+    console.log(`[QUERY] Collection: ${collection}, Query:`, JSON.stringify(query), 'Options:', JSON.stringify(options));
     
     const coll = db.collection(collection);
     let cursor = coll.find(query);
@@ -67,10 +152,15 @@ app.post('/query', async (req, res) => {
     if (options.limit) cursor = cursor.limit(options.limit);
     
     const results = await cursor.toArray();
+    console.log(`[QUERY] Success: returned ${results.length} documents`);
     res.json(results);
   } catch (error) {
-    console.error('Query error:', error);
-    res.status(500).json({ error: error.message });
+    console.error('[QUERY] Error:', error.message, error.stack);
+    res.status(500).json({ 
+      error: error.message,
+      code: error.code,
+      details: 'Check server logs for more information'
+    });
   }
 });
 
@@ -80,13 +170,20 @@ app.post('/aggregate', async (req, res) => {
     await connectToMongo();
     const { collection, pipeline } = req.body;
     
+    console.log(`[AGGREGATE] Collection: ${collection}, Pipeline:`, JSON.stringify(pipeline));
+    
     const coll = db.collection(collection);
     const results = await coll.aggregate(pipeline).toArray();
     
+    console.log(`[AGGREGATE] Success: returned ${results.length} documents`);
     res.json(results);
   } catch (error) {
-    console.error('Aggregate error:', error);
-    res.status(500).json({ error: error.message });
+    console.error('[AGGREGATE] Error:', error.message, error.stack);
+    res.status(500).json({ 
+      error: error.message,
+      code: error.code,
+      details: 'Check server logs for more information'
+    });
   }
 });
 
@@ -96,13 +193,20 @@ app.post('/count', async (req, res) => {
     await connectToMongo();
     const { collection, query = {} } = req.body;
     
+    console.log(`[COUNT] Collection: ${collection}, Query:`, JSON.stringify(query));
+    
     const coll = db.collection(collection);
     const count = await coll.countDocuments(query);
     
+    console.log(`[COUNT] Success: ${count} documents`);
     res.json({ count });
   } catch (error) {
-    console.error('Count error:', error);
-    res.status(500).json({ error: error.message });
+    console.error('[COUNT] Error:', error.message, error.stack);
+    res.status(500).json({ 
+      error: error.message,
+      code: error.code,
+      details: 'Check server logs for more information'
+    });
   }
 });
 
@@ -112,13 +216,20 @@ app.post('/distinct', async (req, res) => {
     await connectToMongo();
     const { collection, field, query = {} } = req.body;
     
+    console.log(`[DISTINCT] Collection: ${collection}, Field: ${field}, Query:`, JSON.stringify(query));
+    
     const coll = db.collection(collection);
     const values = await coll.distinct(field, query);
     
+    console.log(`[DISTINCT] Success: ${values.length} unique values`);
     res.json(values);
   } catch (error) {
-    console.error('Distinct error:', error);
-    res.status(500).json({ error: error.message });
+    console.error('[DISTINCT] Error:', error.message, error.stack);
+    res.status(500).json({ 
+      error: error.message,
+      code: error.code,
+      details: 'Check server logs for more information'
+    });
   }
 });
 
