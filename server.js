@@ -9,8 +9,15 @@ const cors = require('cors');
 
 // Configuration
 const PORT = process.env.PORT || 3000;
-const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://saica:Pn872aGKbJVi3e67@hetzner2.quickconnect.co.za:27017/Saica?authSource=Saica';
+const MONGODB_URI = process.env.MONGODB_URI; // Required - must be set via environment variable
 const DATABASE = process.env.DATABASE || 'Saica';
+
+// Validate required environment variables
+if (!MONGODB_URI) {
+  console.error('❌ ERROR: MONGODB_URI environment variable is required!');
+  console.error('   Set it in your Render dashboard or .env file');
+  process.exit(1);
+}
 
 // Initialize Express
 const app = express();
